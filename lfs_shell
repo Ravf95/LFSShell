@@ -1,0 +1,891 @@
+#!/usr/bin/python3
+
+''' LFS Shell '''
+
+# Autor
+# Rodrigo Villalba
+
+# modulos de python
+import os 					# acceso a llamadas al sistema
+import io 					# input/output, manejo de archivos
+import cmd 					# soporte de linea de comandos (framework)
+import sys 					# acceso a parametros/funciones del interprete
+import time 				# manejo del tiempo
+import socket 				# manejo de conexiones
+import inspect 				# obtiene informacion del script
+import platform 			# acceso a caracteristicas del sistema / plataforma
+import subprocess 			# manejo de subprocesos
+
+# framework Cmd: proporciona métodos para captar y manipular el input del usuario.
+# clase principal
+# hereda de la clase cmd (soporte de linea de comandos)
+class Shell(cmd.Cmd):
+	# atributos definidos para la clase
+	username = ''
+	hostname = ''
+	homepath = ''
+	userip	 = ''
+
+	# método		: 	preloop()
+	# parametros	:	self
+	# utilidad		: 	se ejecuta después de cmdloop()
+	#					es la primera llamada al interprete.
+	# retorno		: 	ninguno
+	# detalles		: 	metodo heredado de la clase Cmd
+	def preloop(self):
+		# mensaje de bienvenida
+		self.intro  = '============================================\n'
+		self.intro += 'LFS Shell v2.0\nAutores: Rodrigo Villalba, Jose Insfran\n'
+		self.intro += '============================================\n\n'
+		self.intro += platform.system() + ' '					# concadena a intro el nombre del SO
+		self.intro += platform.release() + '\n'					# concadena a intro la versión del SO
+		self.intro += 'Kernel ' + os.name + ' '					# concadena a intro el nombre del Kernel
+		self.intro += platform.version() + ' '					# concadena a intro la versión del Kernel
+		self.intro += 'on an ' + platform.machine() + '\n'		# concadena a intro la arquitectura del SO
+
+		self.username = os.getlogin()								# almacena el nombre de usuario actual del SO
+		self.hostname = platform.node()								# almacena el nombre de la pc
+		self.homepath = os.environ['HOME'] 							# obtiene la carpeta del home del usuario actual
+		self.userip	  = socket.gethostbyname(socket.gethostname())	# obtiene la ip actual del usuario conectado
+
+		self.check_login()					# se verifica el inicio de sesión del usuario
+		self.update_prompt()				# actualiza el prompt
+		super(Shell, self).preloop()		# llamada al método preloop del padre (Cmd)
+
+	# método		: 	get_folder()
+	# parametros	:	self
+	# utilidad		: 	obtiene el nombre de la carpeta actual en uso
+	# retorno		: 	nombre de la carpeta
+	# detalles		: 	ninguno
+	def get_folder(self):
+		home = '/home/'
+		dirpath = os.getcwd()						# almacena el directorio actual en uso
+		foldername = os.path.basename(dirpath)		# obtiene la carpeta en uso
+        
+		if foldername == '':	# si la carpta no tiene ningún nombre
+			foldername = '/'	# entonces es la raíz
+
+		if home in foldername:		# si la carpeta actual contiene home
+			foldername = '~'	# entonces se encuentra en home
+
+		return foldername
+
+	# método		: 	prompt()
+	# parametros	:	self
+	# utilidad		: 	asigna el prompt para la shell
+	# retorno		: 	ninguno
+	# detalles		: 	self.prompt es un atributo que se hereda de la clase Cmd
+	def set_prompt(self):
+		self.prompt = self.username		# parametro inicial nombre de usuario
+		folder = self.get_folder()		# obtiene la carpeta actual
+
+		# ¿es un usuario con privilegios de root?
+		if os.getgid() == 0: # obtiene el group id del usuario actual
+			# prompt de root
+			self.prompt = '[' + self.prompt + '@' + self.hostname + ' ' + folder + ']# '
+		else:
+			# prompt de usuario normal
+			self.prompt = self.prompt + ':' + self.hostname + ' ' + folder + '$ '
+
+	# método		: 	update_prompt()
+	# parametros	:	self
+	# utilidad		: 	actualiza el prompt de la shell
+	# retorno		: 	ninguno
+	# detalles		: 	ninguno
+	def update_prompt(self):
+		self.set_prompt() # llamada a set_prompt()
+
+	# método		: 	whosdad()
+	# parametros	:	self
+	# utilidad		: 	obtiene el nombre del método padre
+	# retorno		: 	nombre de la función anterior llamada en el stack
+	# detalles		: 	ninguno
+	def whosdad(self):
+		return inspect.stack()[2][3]
+
+	# método		: 	log_history()
+	# parametros	:	self
+	# utilidad		: 	log para almacenar el historial de comandos
+	#					de forma detallada por usuario
+	# retorno		: 	ninguno
+	# detalles		: 	ninguno
+	def log_history(self, arg):
+		path = self.homepath + '/.lfs_shell_history'	# path del archivo history
+		cmd = self.whosdad()							# método anterior llamado
+		cmd = cmd.replace('do_','')						# nombre del comando ejecutado
+
+		# se ejecuta el bloque
+		# de código captando las excepciones
+		try:
+			# se crea/actualiza el archivo log linea por linea
+			with open(path, 'a') as history:
+				history.write(time.strftime("%Y-%m-%d %H:%M:%S"))	# tiempo actual con formato
+				history.write(' > ')								# usuario
+				history.write(cmd + ' ')							# comando ejecutado
+				history.write(str(arg))								# parametros del comando ejecutado
+				history.write('\n')   		
+		except: # manejo de posibles excepciones
+			e = sys.exc_info()[0] 	# el tipo de excepcion y el valor de retorno
+			msg = 'Error inesperado en el log history ' + e
+			print(msg)				# imprime en pantalla el mensaje
+			self.log_error(msg) 	# se registra en el log
+		finally: # sentencia final, se ejecuta de todas maneras
+			pass
+
+	# método		: 	log_error()
+	# parametros	:	self
+	# utilidad		: 	log para almacenar los errores de los comandos
+	#					de la shell o del interprete
+	# retorno		: 	ninguno
+	# detalles		: 	ninguno
+	def log_error(self, arg):
+		path = '/Shell_error_log'		# path del log error
+		cmd = self.whosdad()			# método anterior llamado
+		cmd = cmd.replace('do_','')		# nombre del comando ejecutado
+
+		# se ejecuta el bloque
+		# de código captando las excepciones
+		try:
+			# se crea/actualiza el archivo log linea por linea
+			with open(path, 'a') as error:
+				error.write(time.strftime("%Y-%m-%d %H:%M:%S"))		# tiempo actual con formato
+				error.write(' # ' + self.username + ' > ')			# usuario
+				error.write(cmd + ' ')								# comando ejecutado
+				error.write(str(arg))								# detalles del comando ejecutado
+				error.write('\n')
+		except: # manejo de posibles excepciones
+				e = sys.exc_info()[0] 								# el tipo de excepcion y el valor de retorno
+				print('Error inesperado en el log error ' + e)		# imprime en pantalla el mensaje
+		finally: # sentencia final, se ejecuta de todas maneras
+			pass
+
+	# método		: 	log_session()
+	# parametros	:	self
+	# utilidad		: 	log para almacenar los errores de los comandos
+	#					de la shell o del interprete
+	# retorno		: 	ninguno
+	# detalles		: 	ninguno
+	def log_session(self, arg):
+		path = '/personal_horarios_log'	# path del archivo de horarios y conexiones
+
+		# se ejecuta el bloque
+		# de código captando las excepciones
+		try:
+			# se crea/actualiza el archivo log linea por linea
+			with open(path, 'a') as session:
+				session.write(time.strftime("%Y-%m-%d %H:%M:%S"))	# tiempo actual con formato
+				session.write(' # ' + self.username + ' > ')		# usuario
+				session.write(str(arg))								# detalles de la sesión
+				session.write('\n')
+		except: # manejo de posibles excepciones
+			e = sys.exc_info()[0] 							# el tipo de excepcion y el valor de retorno
+			msg = 'Error inesperado en el log horarios ' + e
+			print(msg)										# imprime en pantall el mensaje
+			self.log_error(msg) 							# se registra en el log
+		finally: # sentencia final, se ejecuta de todas maneras
+			pass
+
+	# método		: 	log_ftp()
+	# parametros	:	self
+	# utilidad		: 	log para almacenar la sessión ftp
+	#					del usuario
+	# retorno		: 	ninguno
+	# detalles		: 	ninguno
+	def log_ftp(self, arg):
+		# path de el archivo ftp
+		path = '/Shell_transferencias'
+
+		# se ejecuta el bloque
+		# de código captando las excepciones
+		try:
+			with open(path, 'a') as ftp:
+				ftp.write(time.strftime("%Y-%m-%d %H:%M:%S"))	# tiempo actual con formato
+				ftp.write(' # ' + self.username + ' > ')		# usuario
+				ftp.write(str(arg))								# detalles
+				ftp.write('\n')
+		except: # manejo de posibles excepciones
+			e = sys.exc_info()[0] 							# el tipo de excepcion y el valor de retorno
+			msg = 'Error inesperado en el log ftp ' + str(e)
+			print(msg)										# imprime en pantall el mensaje
+			self.log_error(msg) 							# se registra en el log
+		# sentencia final, se ejecuta de todas maneras
+		finally:
+			pass
+
+	# método		: 	check_login()
+	# parametros	:	self
+	# utilidad		: 	verifica los horarios de conexión e ips usadas
+	#					almacena cualquier irregularidad en el log 
+	# retorno		: 	ninguno
+	# detalles		: 	ninguno
+	def check_login(self):
+		cfg = self.homepath + '/.lfs_shell_cfg' # path del archivo cfg
+		h = ''
+		ip = ''
+
+		# ¿existe el archivo cfg?
+		if os.path.isfile(cfg):
+			# se ejecuta el bloque
+			# de código captando las excepciones
+			try:
+				# handler del file
+				# después de realizar todas las operaciones
+				# cierra el archivo
+				with open(cfg, 'r') as session:
+					h = session.readline().split(',')	# linea 1: horarios de entrada
+					session.readline()					# linea 2: horarios de salida
+					ip = session.readline().split(',')	# linea 3: ips usadas
+			except: # manejo de posibles excepciones
+				e = sys.exc_info()[0] 							# el tipo de excepcion y el valor de retorno
+				msg = 'Error inesperado al manipular el archivo cfg ' + str(e)
+				print(msg)										# imprime en pantall el mensaje
+				self.log_error(msg)								# se registra en el log
+			else: # si no existen exepciones, se puedo leer el archivo cfg
+				i = 0
+				now = time.strftime("%H:%M") # horario actual
+
+				# se analizan los horarios
+				for item in h:
+					# ¿algún horario coincide?
+					if now in str(item):
+						i = 0
+						break
+					i += 1
+
+				# ¿ningún horario coincide?
+				if i != 0:
+					msg = 'horario de entrada fuera de rango, agregar ' + now
+					self.log_session(msg) # se registra en el log
+
+				i = 0
+
+				# se analizan las ips
+				for item in ip:
+					# ¿alguna ip coincide con la actual?
+					if self.userip in str(item):
+						i = 0
+						break
+					i += 1
+
+				# ¿ninguna ip concide con la actual?
+				if i != 0:
+					msg = 'ip fuera de rango, agregar ' + self.userip
+					self.log_session(msg) # se registra en el log
+			finally: # sentencia final, se ejecuta de todas maneras
+				pass
+		else:
+			self.log_error(cfg + ' no encontrado') # se registra en el log
+
+	# método		: 	check_logout()
+	# parametros	:	self
+	# utilidad		: 	verifica los horarios de conexión de salida
+	#					almacena cualquier irregularidad en el log 
+	# retorno		: 	ninguno
+	# detalles		: 	ninguno
+	def check_logout(self):
+		cfg = os.environ['HOME'] + '/.lfs_shell_cfg' # path del archivo cfg
+		h = ''
+
+		# ¿existe el archivo cfg?
+		if os.path.isfile(cfg):
+			# se ejecuta el bloque
+			# de código captando las excepciones
+			try:
+				# handler del file
+				# después de realizar todas las operaciones
+				# cierra el archivo
+				with open(cfg, 'r') as session:
+					session.readline()					# linea 1: horarios de entrada
+					h = session.readline().split(',')	# linea 2: horarios de salida
+			except: # manejo de posibles excepciones
+				e = sys.exc_info()[0] 	# el tipo de excepcion y el valor de retorno
+				msg = 'Error inesperado al manipular el archivo cfg ' + str(e)
+				print(msg)				# imprime en pantall el mensaje
+				self.log_error(msg)		# se registra en el log
+			else: # si no existen exepciones, se puedo leer el archivo cfg
+				i = 0
+				now = time.strftime("%H:%M")
+
+				# se analizan los horarios
+				for item in h:
+					# ¿algún horario coincide?
+					if now in str(item):
+						i = 0
+						break
+					i += 1
+
+				# ¿ningún horario coincide?
+				if i != 0:
+					msg = 'horario de salida fuera de rango, agregar ' + now
+					self.log_session(msg) # se registra en el log
+			finally: # sentencia final, se ejecuta de todas maneras
+				pass
+		else: # no existe el archivo cfg
+			self.log_error(cfg + ' no encontrado') # se registra en el log
+
+	# método		: 	do_copy()
+	# parametros	:	self
+	# utilidad		: 	copia el contenido de un archivo
+	#					a otro nuevo (en binario)
+	# retorno		: 	ninguno
+	# detalles		: 	comando de la shell
+	def do_copy(self, arg):
+		# help copy
+		'''copy <source file> <new file>'''
+
+		arg = arg.split()	# se separa el argumento por espacio
+							# y se almacena como una lista
+		# formato incorrecto
+		# se requieren 2 argumentos							
+		if len(arg) != 2:
+			print('copy <source file> <new file>')
+			log_error('<source file> <new file>')
+			return None
+
+		# ¿existe el archivo?
+		if os.path.isfile(arg[0]) == False:
+			print('copy: no se encuentra el archivo ' + arg[0])	# imprime en pantall el mensaje
+			log_error('no se encuentra el archivo ' + arg[0]) 	# se registra en el log
+			return None
+
+		# ¿existe el archivo destino?
+		if os.path.isfile(arg[1]):
+			print('copy: el archivo destino ' + arg[1]  + ' ya existe')	# imprime en pantall el mensaje
+			log_error('el archivo destino ' + arg[1]  + ' ya existe') 	# se registra en el log
+			return None
+
+		# se ejecuta el bloque
+		# de código captando las excepciones
+		try:
+			# handler del file src en binario
+			# después de realizar todas las operaciones
+			# cierra el archivo
+			with open(arg[0], 'rb') as src:
+				# handler del file dst en binario
+				# después de realizar todas las operaciones
+				# cierra el archivo
+				with open(arg[1], 'wb') as dst:
+					# copia todo el contenido de
+					# src a dst de forma binaria 
+					# (sin codificación de caracteres)
+					dst.write(src.read())
+		except: # manejo de posibles excepciones
+			e = sys.exc_info()[0] 	# el tipo de excepcion y el valor de retorno
+			msg = 'Error inesperado en el comando copy ' + arg + ' : ' + str(e)
+			print(msg)				# imprime en pantall el mensaje
+			self.log_error(msg)		# se registra en el log
+		else: # la operación se realizo correctamente
+			# si no existen excepciones
+			# la copia se realizo con exito
+			print('archivo creado ' + arg[1])
+			print('copia realizada con exito ' + arg[0] + ' -> ' + arg[1])
+		finally: # sentencia final, se ejecuta de todas maneras
+			pass
+
+		self.log_history(arg) # se registra en el log
+
+	# método		: 	do_list()
+	# parametros	:	self
+	# utilidad		: 	listar archivos en un directorio
+	#					específico
+	# retorno		: 	ninguno
+	# detalles		: 	comando de la shell
+	def do_list(self, arg):
+		# help list
+		'''list <directorio>'''
+
+		dirpath = arg 	# path a listar
+
+		# ¿contiene argumentos?
+		if arg:
+			# ¿existe el directorio especificado?
+			if os.path.isdir(arg) == False:
+				print('directorio ' + arg + ' no valido')		# imprime en pantall el mensaje
+				self.log_error('directorio ' + arg + ' no valido')	# se registra en el log
+				return None
+		else: # por default el directorio a listar es el actual
+			dirpath = os.getcwd() # se obiene el directorio actual
+
+		# se ejecuta el bloque
+		# de código captando las excepciones
+		try:
+			# funcion propia del módulo os
+			# lista los archivos de un directorio
+			result = os.listdir(dirpath)
+		except: # manejo de posibles excepciones
+			e = sys.exc_info()[0] 	# el tipo de excepcion y el valor de retorno
+			msg = 'Error inesperado en el comando list ' + arg + ' : ' + str(e)
+			print(msg)				# imprime en pantall el mensaje
+			self.log_error(msg)		# se registra en el log
+		else: # la operación se realizo correctamente
+			# se imprimen los resultados almacenados
+			# como lista en result de a uno
+			for item in result:
+				print(item);	# imprime en pantall el mensaje
+		finally: # sentencia final, se ejecuta de todas maneras
+			pass
+
+		self.log_history(arg) # se registra en el log
+
+	# método		: 	do_dir()
+	# parametros	:	self
+	# utilidad		: 	cambiar el directorio actual
+	# retorno		: 	ninguno
+	# detalles		: 	comando de la shell
+	def do_dir(self, arg):
+		# help dir
+		'''dir <nuevo directorio>'''
+		dirpath = arg # path del nuevo directorio
+
+		# ¿contiene argumentos?
+		if arg:
+			# ¿existe el directorio especificado?
+			if os.path.isdir(arg) == False:
+				print('directorio ' + arg + ' no valido')		# imprime en pantall el mensaje
+				self.log_error('directorio ' + arg + ' no valido')	# se registra en el log
+				return None
+		else: # por default el directorio a cambiar es el actual
+			dirpath = os.getcwd()    
+
+		# se ejecuta el bloque
+		# de código captando las excepciones
+		try:
+			# funcion propia del módulo os
+			# cambiar el directorio actual
+			os.chdir(dirpath)
+		except: # manejo de posibles excepciones
+			e = sys.exc_info()[0] 	# el tipo de excepcion y el valor de retorno
+			msg = 'Error inesperado en el comando dir ' + arg + ':' + str(e)
+			print(msg)				# imprime en pantall el mensaje
+			self.log_error(msg)		# se registra en el log
+		finally: # sentencia final, se ejecuta de todas maneras
+			pass
+
+		self.update_prompt() 	# actualiza el prompt
+		self.log_history(arg)	# se registra en el log
+
+	# método		: 	do_daemon()
+	# parametros	:	self
+	# utilidad		: 	control de servicios [start|stop] de 
+	# 					programas que utilicen el intreprete de python 3
+	# retorno		: 	ninguno
+	# detalles		: 	comando de la shell
+	def do_daemon(self, arg):
+		# help daemon
+		'''daemon [start|stop] service.pid'''
+
+		# se ejecuta el bloque
+		# de código captando las excepciones
+		try:
+			# comando a ejecutar
+			# por medio de un subproceso a la shell
+			# separado por espacio en una lista
+			cmd = arg.split()
+
+			if len(cmd) != 2:
+				print('daemon start service/program')
+				print('daemon stop service.pid')
+				return None
+
+			if 'start' in cmd[0]:
+				cmd = 'python3 ' + cmd[1]
+				os.system(cmd)
+			elif 'stop' in cmd[0]:
+				os.kill(int(cmd[1]), 9);
+			else:
+				print('argumento del comando no valido')
+		except: # manejo de otras excepciones
+			e = sys.exc_info()[0] 	# el tipo de excepcion y el valor de retorno
+			msg = 'Error inesperado en el comando ' + arg + ' ' + str(e)
+			print(msg)			# imprime en pantall el mensaje
+			self.log_error(msg)	# se registra en el log
+		else: # la operación se realizo correctamente
+			# en caso de un cambio de directorio
+			# por un comando externo a la shell
+			self.update_prompt()	# se actualiza el prompt 
+		finally: # sentencia final, se ejecuta de todas maneras
+			pass
+
+		self.log_history(arg) # se registra en el log
+
+	# método		: 	do_newuser()
+	# parametros	:	self
+	# utilidad		: 	agregar un nuevo usuario al SO
+	# retorno		: 	ninguno
+	# detalles		: 	comando de la shell
+	def do_newuser(self, arg):
+		# help newuser
+		'''newuser <usuario>'''
+
+		# contiene los argumentos
+		# sin espacios
+		space = arg.strip()
+
+		# ¿existen argumentos?
+		if not len(space) > 0:
+			return None
+
+		# ¿definio la carpeta home?
+		if not '-m' in arg:
+			arg += ' -m'
+
+		# ¿definio la shell a usar?
+		if not '-s' in arg:
+			# se agrega el parametro de la
+			# shell de acuerdo al nombre del
+			# script de python3 actual
+			arg += ' -s ' + sys.argv[0]
+
+		# se ejecuta el bloque
+		# de código captando las excepciones
+		try:
+			# llamada a subproceso
+			# del comando del sistema useradd
+			# separado por espacio en una lista
+			cmd = 'useradd ' + arg
+			subprocess.check_output(cmd.split()) 
+		except subprocess.CalledProcessError as e: # excepcion del subproceso
+			# si ocurrio algún error 
+			# se almacena
+			print(e.output)
+			self.log_error(str(e))
+		except: # manejo de otras excepciones
+			e = sys.exc_info()[0] 	# el tipo de excepcion y el valor de retorno
+			msg = 'Error inesperado en el comando newuser ' + arg + ' ' + str(e)
+			print(msg)			# imprime en pantall el mensaje
+			self.log_error(msg)	# se registra en el log
+		else: # la operación se realizo correctamente
+			# se definen los horarios e ips del usuario creado
+			print('\nIngresa tus horarios de entrada (separado por ,): ')
+			timeIn = input()
+			print('\nIngresa tus horarios de salida (separado por ,): ')
+			timeOut = input()
+			print('\nIngresa las ips (separado por ,): ')
+			ips = input()
+
+			# se separa los parametros actuales con ' ' en un vector
+			arg = arg.split()
+
+			# se crea el archivo cfg del usuario nuevo
+			cfg = open('/home/' + arg[0] + '/.lfs_shell_cfg', 'w')
+			cfg.write(timeIn + '\n')
+			cfg.write(timeOut + '\n')
+			cfg.write(ips + '\n')
+			cfg.close()
+
+			# resultado de la operación
+			print('archivo creado ' + arg[1])
+			print('usuario creado con exito ' + arg[0])
+		finally: # sentencia final, se ejecuta de todas maneras
+			pass
+
+		self.log_history(arg) # se registra en el log
+
+	# método		: 	do_move()
+	# parametros	:	self
+	# utilidad		: 	mover una carpeta 
+	# retorno		: 	ninguno
+	# detalles		: 	comando de la shell
+	def do_move(self, arg):
+		# help move
+		'''move <arhivo/directorio> <nueva ubicacion>'''
+
+		# se ejecuta el bloque
+		# de código captando las excepciones
+		try:
+			# llamada a subproceso
+			# del comando del sistema mv
+			# separado por espacio en una lista
+			cmd = 'mv ' + arg
+			subprocess.check_output(cmd.split())
+		# excepcion del subproceso
+		except subprocess.CalledProcessError as e:
+			print(e.output)
+			self.log_error(str(e)) # se registra en el log
+		except: # manejo de otras excepciones
+			e = sys.exc_info()[0] 	# el tipo de excepcion y el valor de retorno
+			msg = 'Error inesperado en el comando move ' + arg + ' ' + str(e)
+			print(msg)			# imprime en pantall el mensaje
+			self.log_error(msg)	# se registra en el log
+		# sentencia final, se ejecuta de todas maneras
+		finally:
+			pass
+
+		self.log_history(arg) # se registra en el log
+
+	# método		: 	do_rename()
+	# parametros	:	self
+	# utilidad		: 	renombra un archivo
+	# retorno		: 	ninguno
+	# detalles		: 	comando de la shell
+	def do_rename(self, arg):
+		# help rename
+		'''rename <archivo>'''
+
+		# se ejecuta el bloque
+		# de código captando las excepciones
+		try:
+			# llamada a subproceso
+			# del comando del sistema rename
+			# separado por espacio en una lista
+			cmd = 'mv ' + arg
+			subprocess.check_output(cmd.split())
+		# excepcion del subproceso
+		except subprocess.CalledProcessError as e:
+			print(e.output)
+			self.log_error(str(e)) # se registra en el log
+		except: # manejo de otras excepciones
+			e = sys.exc_info()[0] 	# el tipo de excepcion y el valor de retorno
+			msg = 'Error inesperado en el comando rename' + arg + ' ' + str(e)
+			print(msg)			# imprime en pantall el mensaje
+			self.log_error(msg)	# se registra en el log
+		# sentencia final, se ejecuta de todas maneras
+		finally:
+			pass
+
+		self.log_history(arg) # se registra en el log
+
+	# método		: 	do_newdir()
+	# parametros	:	self
+	# utilidad		: 	crea un directorio
+	# retorno		: 	ninguno
+	# detalles		: 	comando de la shell
+	def do_newdir(self, arg):
+		# help newdir
+		'''newdir directorio'''
+
+		# se ejecuta el bloque
+		# de código captando las excepciones
+		try:
+			# llamada a subproceso
+			# del comando del sistema mkdir
+			# separado por espacio en una lista
+			cmd = 'mkdir ' + arg
+			subprocess.check_output(cmd.split())
+		# excepcion del subproceso
+		except subprocess.CalledProcessError as e:
+			print(e.output)
+			self.log_error(str(e)) # se registra en el log
+		except: # manejo de otras excepciones
+			e = sys.exc_info()[0] 	# el tipo de excepcion y el valor de retorno
+			msg = 'Error inesperado en el comando newdir' + arg + ' ' + str(e)
+			print(msg)			# imprime en pantall el mensaje
+			self.log_error(msg)	# se registra en el log
+		# sentencia final, se ejecuta de todas maneras
+		finally:
+			pass
+
+		self.log_history(arg) # se registra en el log
+
+	# método		: 	do_owner()
+	# parametros	:	self
+	# utilidad		: 	cambia el propietario de un archivo/carpeta
+	# retorno		: 	ninguno
+	# detalles		: 	comando de la shell
+	def do_owner(self, arg):
+		# help owner
+		'''owner file/directorio'''
+
+		# se ejecuta el bloque
+		# de código captando las excepciones		
+		try:
+			# llamada a subproceso
+			# del comando del sistema chown
+			# separado por espacio en una lista
+			cmd = 'chown ' + arg
+			subprocess.check_output(cmd.split())
+		# excepcion del subproceso
+		except subprocess.CalledProcessError as e:
+			print(e.output)
+			self.log_error(str(e)) # se registra en el log
+		except: # manejo de otras excepciones
+			e = sys.exc_info()[0] 	# el tipo de excepcion y el valor de retorno
+			msg = 'Error inesperado en el comando owner' + arg + ' ' + str(e)
+			print(msg)			# imprime en pantall el mensaje
+			self.log_error(msg)	# se registra en el log
+		# sentencia final, se ejecuta de todas maneras
+		finally:
+			pass
+
+		self.log_history(arg) # se registra en el log
+
+	# método		: 	do_rule()
+	# parametros	:	self
+	# utilidad		: 	cambia los permisos de un archivo/carpeta
+	# retorno		: 	ninguno
+	# detalles		: 	comando de la shell
+	def do_rule(self, arg):
+		# help rule
+		'''rule permisos archivo/carpeta'''
+
+		# se ejecuta el bloque
+		# de código captando las excepciones	
+		try:
+			# llamada a subproceso
+			# del comando del sistema chmod
+			# separado por espacio en una lista
+			cmd = 'chmod ' + arg
+			subprocess.check_output(cmd.split())
+		# excepcion del subproceso
+		except subprocess.CalledProcessError as e:
+			print(e.output)
+			self.log_error(str(e)) # se registra en el log
+		except: # manejo de otras excepciones
+			e = sys.exc_info()[0] 	# el tipo de excepcion y el valor de retorno
+			msg = 'Error inesperado en el comando rule' + arg + ' ' + str(e)
+			print(msg)			# imprime en pantall el mensaje
+			self.log_error(msg)	# se registra en el log
+		# sentencia final, se ejecuta de todas maneras
+		finally:
+			pass
+
+		self.log_history(arg)
+
+	# método		: 	do_password()
+	# parametros	:	self
+	# utilidad		: 	asigna/cambia la contraseña de usuario
+	# retorno		: 	ninguno
+	# detalles		: 	comando de la shell
+	def do_password(self, arg):
+		# help
+		'''password <usuario>'''
+
+		# se ejecuta el bloque
+		# de código captando las excepciones	
+		try:
+			# llamada a subproceso
+			# del comando del sistema passwd
+			# separado por espacio en una lista
+			cmd = 'passwd ' + arg
+			subprocess.check_output(cmd.split())
+		# excepcion del subproceso
+		except subprocess.CalledProcessError as e:
+			print(e.output)
+			self.log_error(str(e)) # se registra en el log
+		except: # manejo de otras excepciones
+			e = sys.exc_info()[0] 	# el tipo de excepcion y el valor de retorno
+			msg = 'Error inesperado en el comando password' + arg + ' ' + str(e)
+			print(msg)			# imprime en pantall el mensaje
+			self.log_error(msg)	# se registra en el log
+		# sentencia final, se ejecuta de todas maneras
+		finally:
+			pass
+
+		self.log_history(arg) # se registra en el log
+
+	# método		: 	do_shell()
+	# parametros	:	self
+	# utilidad		: 	comandos externos a la shell
+	# retorno		: 	ninguno
+	# detalles		: 	comando de la shell
+	def do_shell(self, arg):
+		'''shell <comando>'''
+
+		# se ejecuta el bloque
+		# de código captando las excepciones
+		try:
+			# comando a ejecutar
+			# almacenado en una lista
+			cmd = arg.split()
+
+			# el comando cd no funciona
+			# porque os.system realiza una 
+			# llamada como subproceso
+			if 'cd' in cmd[0].strip(): # primer argumento del comando shell sin espacios
+				# argumentos del comando cd
+				# se unen todos los valores de la lista
+				# después del comando cd a un nuevo string
+				cmd = ''.join(cmd[1:])
+
+				# ¿el usuario quiere regresar
+				# a la carpeta anterior?
+				if '..' in cmd:
+					print('se requiere la ruta completa')
+					return None
+
+				# cambia el directorio
+				# con el argumento pasado
+				os.chdir(cmd)
+			else:
+				# llamada a subproceso
+				# del comando del sistema
+				os.system(arg)
+		# comando no encontrado
+		except FileNotFoundError:
+			# ¿llamada al comando cd?
+			if 'cd' in arg.split()[0].strip():
+				print('ruta no encontrada')
+			else: # otro comando
+				print('comando ' + arg.split()[0] + ' no encontrado')
+		except: # manejo de otras excepciones
+			e = sys.exc_info()[0] 	# el tipo de excepcion y el valor de retorno
+			msg = 'Error inesperado en el comando ' + arg + ' ' + str(e)
+			print(msg)			# imprime en pantall el mensaje
+			self.log_error(msg)	# se registra en el log
+		# sentencia final, se ejecuta de todas maneras
+		finally:
+			pass
+
+		self.update_prompt() # se actualiza el prompt
+		self.log_history(arg) # se registra en el log
+
+	# método		: 	do_ftp()
+	# parametros	:	self
+	# utilidad		: 	transmisión de archivos por el protocolo ftp
+	# retorno		: 	ninguno
+	# detalles		: 	comando de la shell
+	def do_ftp(self, arg):
+		# help ftp
+		'''ftp dominio'''
+
+		# se ejecuta el bloque
+		# de código captando las excepciones
+		try:
+			# llamada a subproceso
+			# del comando del sistema mv
+			# separado por espacio en una lista
+			cmd = 'ftp ' + arg
+			result = subprocess.check_output(cmd.split())
+		# excepcion del subproceso
+		except subprocess.SubprocessError as e:
+			print(e.output)
+			self.log_error(str(e)) # se registra en el log
+		except: # manejo de otras excepciones
+			e = sys.exc_info()[0] 	# el tipo de excepcion y el valor de retorno
+			msg = 'Error inesperado en el comando ftp ' + arg + ' ' + str(e)
+			print(msg)			# imprime en pantall el mensaje
+			self.log_error(msg)	# se registra en el log
+		else:
+			msg  = 'ftp\n '
+			msg += str(result) + '\n '
+			msg += arg
+
+			print(msg) # imprime en pantall el mensaje
+			# se registra en el log sin
+			# saltos de linea
+			self.log_ftp(msg.replace('\n', ''))
+		# sentencia final, se ejecuta de todas maneras
+		finally:
+			pass
+
+		self.log_history(arg) # se registra en el log
+
+	# método		: 	do_logout()
+	# parametros	:	self
+	# utilidad		: 	finalizar la sesión de la shell
+	# retorno		: 	salida de la shell
+	# detalles		: 	comando de la shell
+	def do_logout(self, arg):
+		# help logout
+		'''logout -> finaliza la sesion'''
+
+		self.check_logout()		# verifica los horarios de salida
+		self.log_history('') 	# se registra en el log
+		return True				# termina la ejecución de la shell
+
+# main del módulo
+if __name__ == '__main__':
+	# llamada al método principal de la Shell
+	# el cuál realiza un loop esperando un retorno
+	# True
+	Shell().cmdloop()
